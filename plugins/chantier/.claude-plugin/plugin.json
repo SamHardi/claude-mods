@@ -1,7 +1,7 @@
 {
   "name": "chantier",
   "version": "0.1.0",
-  "description": "A pane for multi-session work: your open PRs grouped by what they wait for (with their PR, session and ticket links), a plan of briques per repo and wave that Claude proposes and you approve, a run view of who waits on you, and a landing view (merge order, backports). Plus a band above the prompt and relay toasts.",
+  "description": "A pane for multi-session work: your open PRs led by the one to take next and a button for its job, grouped by what they wait for (with their PR, session and ticket links), a plan of briques per repo and wave that Claude proposes and you approve, a run view of who waits on you, and a landing view (merge order, backports). Plus a status line entry with the session's ticket and brique, and relay toasts.",
   "author": {
     "name": "Sam Hardi",
     "url": "https://github.com/SamHardi"

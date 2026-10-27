@@ -4,7 +4,7 @@ Claude Code mods for working on several things at once: many sessions, worktrees
 
 | Mod | What it adds |
 | --- | --- |
-| [chantier](plugins/chantier) | A pane with four views, a band above the prompt and relay toasts. |
+| [chantier](plugins/chantier) | A pane with four views, a status line entry and relay toasts. |
 | [git-guardrails](plugins/git-guardrails) | Refuses risky git, gh and docker commands before they run. |
 | [dev-loop](plugins/dev-loop) | A status line saying which dev ports are up and which folder serves each. |
 
@@ -34,12 +34,12 @@ Answer `y` to add the marketplace, then pick a scope. Each mod's options are row
 
 `/chantier` opens a pane beside the chat. It has four views:
 
-- **PRs**: your open PRs, plus the open Mergify backports of your merged ones. They are grouped as needs you (conflict, failed checks, changes requested, ready to merge), waiting for review, drafts and stale. Each PR links to itself, to the session working on its branch (or offers to start one in a worktree), and to its ticket.
+- **PRs**: your open PRs, plus the open Mergify backports of your merged ones. The view leads with how many need you and a **Next up** card: the most urgent PR (conflict, then failed checks, changes requested, ready to merge, stuck CI), why, and one button for its job (*Fix the backport*, *Resolve conflicts*, *Triage CI*, *Address review*, *Merge…*, *Check CI*). The button puts a prompt in the input box that hands the job to the session working on the PR, or starts one in its worktree; nothing runs until you send it. Filters (needs you, in review, drafts, stale) and a repo picker narrow the list. PRs that need you are cards; the others are light rows. State reads as pills (CI progress, review, conflict, backport target), drawn as SVG on the desktop app and as coloured words in the terminal. Each PR links to itself and its ticket; *Go to session* shows the session working on it in the desktop app, and *Start a session* prepares one when there is none.
 - **Plan**: `/chantier PROJ-157` puts a planning prompt in the input box. Claude reads the epic, its tickets and the code, then calls the `plan_write` tool the mod gives it. The plan splits the work into briques (1 ticket, 1 repo, 1 branch, 1 PR) laid out per repo (lane) and per wave; everything in one wave runs in parallel. Each brique has an executor: a linked session, a workflow, a subagent, or you. Nothing starts until you approve. `/chantier go` then prepares the launch prompt for the next wave.
 - **Run**: what waits on you first, then each repo's briques by state, then what is running and what is blocked. Claude keeps it current with the `brique_update` tool as linked sessions report back.
 - **Landing**: the merge order taken from the dependencies, the open backports, and the worktrees to clean up.
 
-The band above the prompt shows, for the session's branch, its brique, ticket, PR and CI state. Toasts announce CI results, approvals, new conflicts, and the briques a closed PR unblocks.
+A status line entry shows the session's ticket and, in a chantier, its brique, wave and dependencies; the band above the prompt stays the app's own (branch, diff, pull request). Toasts announce CI results, approvals, new conflicts, and the briques a closed PR unblocks.
 
 Plans are JSON files under `~/.claude/chantiers/`, outside your repos. PR data comes from `gh`, which must be installed and signed in.
 
