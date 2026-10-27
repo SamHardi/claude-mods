@@ -47,6 +47,7 @@ Plans are JSON files under `~/.claude/chantiers/`, outside your repos. PR data c
 | --- | --- |
 | `owner` | GitHub org or user the PR search is limited to. Empty searches every repo. |
 | `ticketUrl` | Prefix ticket keys are appended to for links, e.g. `https://example.atlassian.net/browse/`. |
+| `repoAliases` | `repo=label` pairs for shorter repo names in the pane. |
 | `clones` | `repo=path` entries, comma-separated (`|` between several paths), scanned to find each PR's worktree. |
 | `backportRepos` | Repos whose Mergify backports of your merged PRs are tracked. |
 | `staleDays` | Days without activity before an open PR counts as stale (30). |

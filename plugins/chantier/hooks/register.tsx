@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { BoxProps, ButtonProps, ElementConstructor, EngineInterface, LinkProps, Register, TextProps, ThemeKey } from 'claude-code'
+import type { BoxProps, ButtonProps, ElementConstructor, EngineInterface, LinkProps, Register, RenderChildren, TextProps, ThemeKey } from 'claude-code'
 
 import type { Brique, BriqueStatus, Here, Plan, PrGroup, PrItem, PrSnapshot, View } from '../types'
-import { BIN, HERE_POLL_MS, MAX_TOASTS_PER_REFRESH, PR_POLL_MS, PR_TTL_MS, configOf } from './config'
+import { BIN, HERE_POLL_MS, MAX_TOASTS_PER_REFRESH, PR_POLL_MS, PR_TTL_MS, configOf, repoLabel } from './config'
 import type { Config } from './config'
 import { changes, fetchPrs, ticketOf } from './prs'
 import type { Run } from './prs'
@@ -194,6 +194,8 @@ async function fill($: $, text: string): Promise<void> {
 }
 
 /* ---------- drawing ---------- */
+// Spacing uses the surface's own steps (xs…xl), never cell counts: on desktop a step follows the app's
+// spacing scale, so the pane reads like the app rather than a terminal. Mono is kept for nothing.
 
 const GROUPS: { id: string; label: string; of: PrGroup[] }[] = [
   { id: 'act', label: 'Needs you', of: ['need', 'ready'] },
@@ -201,25 +203,19 @@ const GROUPS: { id: string; label: string; of: PrGroup[] }[] = [
   { id: 'draft', label: 'Drafts', of: ['draft'] },
   { id: 'stale', label: 'Stale', of: ['stale'] },
 ]
-const PR_MARK: Record<PrGroup, { glyph: string; color: ThemeKey }> = {
-  need: { glyph: '✗', color: 'error' },
-  ready: { glyph: '✓', color: 'success' },
-  review: { glyph: '◎', color: 'suggestion' },
-  draft: { glyph: '◌', color: 'inactive' },
-  stale: { glyph: '☾', color: 'inactive' },
+const STATUS_MARK: Record<BriqueStatus, { color: ThemeKey; label: string }> = {
+  done: { color: 'success', label: 'Done' },
+  running: { color: 'suggestion', label: 'Running' },
+  waiting: { color: 'warning', label: 'Waiting on you' },
+  blocked: { color: 'error', label: 'Blocked' },
+  todo: { color: 'inactive', label: 'To do' },
 }
-const STATUS_MARK: Record<BriqueStatus, { glyph: string; color: ThemeKey; label: string }> = {
-  done: { glyph: '✓', color: 'success', label: 'done' },
-  running: { glyph: '●', color: 'suggestion', label: 'running' },
-  waiting: { glyph: '?', color: 'warning', label: 'waiting on you' },
-  blocked: { glyph: '‖', color: 'error', label: 'blocked' },
-  todo: { glyph: '○', color: 'inactive', label: 'to do' },
-}
+type Chip = { text: string; color: ThemeKey }
 
 function age(iso: string, now: number): string {
   const days = Math.floor((now - Date.parse(iso)) / 86_400_000)
   if (days < 1) return 'today'
-  if (days < 30) return `${days}d`
+  if (days < 30) return `${days}d ago`
   const d = new Date(Date.parse(iso))
   return `${MONTHS[d.getMonth()]} ${d.getDate()}`
 }
@@ -227,31 +223,46 @@ function age(iso: string, now: number): string {
 function ago(at: number, now: number): string {
   if (at === 0) return 'never fetched'
   const min = Math.round((now - at) / 60_000)
-  return min < 1 ? 'fetched just now' : `fetched ${min} min ago`
+  return min < 1 ? 'updated just now' : `updated ${min} min ago`
 }
 
-function shortRepo(repo: string): string {
-  return repo.length > 22 ? `…${repo.slice(-21)}` : repo
-}
-
-function prReasons(pr: PrItem): { text: string; color: ThemeKey }[] {
-  const out: { text: string; color: ThemeKey }[] = []
+function prChips(pr: PrItem): Chip[] {
+  const out: Chip[] = []
   const total = pr.checks.ok + pr.checks.fail + pr.checks.pending
-  if (pr.group === 'ready') out.push({ text: 'ready to merge', color: 'success' })
-  if (pr.isConflict) out.push({ text: 'conflict', color: 'error' })
+  if (pr.group === 'ready') out.push({ text: 'Ready to merge', color: 'success' })
+  if (pr.isConflict) out.push({ text: 'Conflict', color: 'error' })
   if (pr.checks.fail) out.push({ text: `${pr.checks.fail} checks failed`, color: 'error' })
-  if (pr.review === 'CHANGES_REQUESTED') out.push({ text: 'changes requested', color: 'error' })
-  if (pr.review === 'APPROVED') out.push({ text: 'approved', color: 'success' })
-  if (pr.review === 'REVIEW_REQUIRED' && !pr.isDraft) out.push({ text: 'review required', color: 'subtle' })
-  if (pr.checks.pending) out.push({ text: `CI ${pr.checks.ok}/${total} running`, color: 'suggestion' })
-  else if (total && !pr.checks.fail) out.push({ text: `CI ${total}/${total}`, color: 'success' })
-  if (pr.backportOf) out.push({ text: `backport of #${pr.backportOf} to ${pr.base}`, color: 'subtle' })
+  if (pr.review === 'CHANGES_REQUESTED') out.push({ text: 'Changes requested', color: 'error' })
+  if (pr.review === 'APPROVED' && pr.group !== 'ready') out.push({ text: 'Approved', color: 'success' })
+  if (pr.review === 'REVIEW_REQUIRED' && !pr.isDraft) out.push({ text: 'Review required', color: 'subtle' })
+  if (pr.checks.pending) out.push({ text: `CI running ${pr.checks.ok}/${total}`, color: 'suggestion' })
+  else if (total && !pr.checks.fail) out.push({ text: `CI passed`, color: 'success' })
   return out
+}
+
+function Chips(ui: UI, chips: Chip[]) {
+  const { Box, Text } = ui
+  if (!chips.length) return null
+  return (
+    <Box flexDirection="row" gap="sm" flexWrap="wrap">
+      {chips.map(c => <Text size="footnote" weight="medium" color={c.color}>{c.text}</Text>)}
+    </Box>
+  )
+}
+
+function Card(ui: UI, key: string, accent: ThemeKey | null, children: RenderChildren[]) {
+  const { Box } = ui
+  return (
+    <Box key={key} flexDirection="column" gap="xs" paddingX="md" paddingY="sm" borderStyle="round"
+      borderColor={accent ?? 'promptBorder'} hover={{ borderColor: 'suggestion' }}>
+      {children}
+    </Box>
+  )
 }
 
 function TicketLink(ui: UI, config: Config, ticket: string) {
   const { Link, Text } = ui
-  return config.ticketUrl ? <Link href={`${config.ticketUrl}${ticket}`} label={ticket} /> : <Text mono>{ticket}</Text>
+  return config.ticketUrl ? <Link href={`${config.ticketUrl}${ticket}`} label={ticket} /> : <Text size="footnote">{ticket}</Text>
 }
 
 function Switcher(ui: UI, $: $, view: View, actCount: number) {
@@ -263,7 +274,7 @@ function Switcher(ui: UI, $: $, view: View, actCount: number) {
     { id: 'land', label: 'Landing' },
   ]
   return (
-    <Box flexDirection="row" gap={1} flexWrap="wrap">
+    <Box flexDirection="row" gap="xs" flexWrap="wrap">
       {tabs.map(t => (
         <Button key={`view-${t.id}`} label={t.label} variant={t.id === view ? 'primary' : 'secondary'} onPress={() => update($, viewA, () => t.id)} />
       ))}
@@ -271,63 +282,53 @@ function Switcher(ui: UI, $: $, view: View, actCount: number) {
   )
 }
 
-function Section(ui: UI, label: string, count?: number) {
+function Section(ui: UI, key: string, label: string, count: number | null, children: RenderChildren[]) {
   const { Box, Text } = ui
   return (
-    <Box flexDirection="row" gap={1} marginTop={1}>
-      <Text weight="semibold">{label}</Text>
-      {count !== undefined && <Text dimColor tabular>{String(count)}</Text>}
+    <Box key={key} flexDirection="column" gap="sm" marginTop="md">
+      <Box flexDirection="row" gap="sm" alignItems="center">
+        <Text size="heading" weight="semibold">{label}</Text>
+        {count !== null && <Text size="footnote" dimColor tabular>{String(count)}</Text>}
+      </Box>
+      {children}
     </Box>
   )
 }
 
-function PrRow(ui: UI, $: $, config: Config, pr: PrItem, now: number) {
+function PrCard(ui: UI, $: $, config: Config, pr: PrItem, now: number) {
   const { Box, Text, Button, Link } = ui
-  const mark = PR_MARK[pr.group]
-  return (
-    <Box key={`pr-${pr.repo}-${pr.number}`} flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Text color={mark.color}>{mark.glyph}</Text>
-        <Text mono dimColor>{`${shortRepo(pr.repo)}#${pr.number}`}</Text>
-        <Box flexGrow={1}><Text wrap="truncate-end">{pr.title}</Text></Box>
-        <Text dimColor tabular>{age(pr.updatedAt, now)}</Text>
-      </Box>
-      <Box flexDirection="row" gap={1} flexWrap="wrap" paddingLeft={2}>
-        {prReasons(pr).map(r => <Text size="footnote" color={r.color}>{r.text}</Text>)}
-      </Box>
-      <Box flexDirection="row" gap={2} flexWrap="wrap" paddingLeft={2}>
-        <Link href={pr.url} label="PR" />
-        <Button key={`sess-${pr.repo}-${pr.number}`} plain onPress={() => fill($, sessionPrompt(pr))}>
-          {pr.worktree ? `Session · ${pr.worktree.split('/').pop()}` : 'Pick up in a session'}
-        </Button>
-        {pr.ticket ? TicketLink(ui, config, pr.ticket) : <Text dimColor>no ticket</Text>}
-      </Box>
-    </Box>
-  )
+  const accent: ThemeKey | null = pr.group === 'need' ? 'error' : pr.group === 'ready' ? 'success' : null
+  const meta = [repoLabel(config, pr.repo), `#${pr.number}`, age(pr.updatedAt, now), pr.backportOf ? `backport of #${pr.backportOf} to ${pr.base}` : ''].filter(Boolean).join(' · ')
+  return Card(ui, `pr-${pr.repo}-${pr.number}`, accent, [
+    <Text weight="medium" wrap="wrap">{pr.title}</Text>,
+    <Text size="footnote" dimColor>{meta}</Text>,
+    Chips(ui, prChips(pr)),
+    <Box flexDirection="row" gap="md" alignItems="center" flexWrap="wrap" marginTop="xs">
+      <Link href={pr.url} label="Open PR" />
+      {pr.ticket && TicketLink(ui, config, pr.ticket)}
+      <Box flexGrow={1} />
+      <Button key={`sess-${pr.repo}-${pr.number}`} variant="secondary"
+        label={pr.worktree ? 'Open session' : 'Start a session'} onPress={() => fill($, sessionPrompt(pr))} />
+    </Box>,
+  ])
 }
 
 function PrView(ui: UI, $: $, config: Config, snap: PrSnapshot | null, now: number) {
   const { Box, Text, Button } = ui
-  if (!snap) return <Text dimColor>Fetching your PRs…</Text>
+  if (!snap) return <Text dimColor>Fetching your pull requests…</Text>
   const repos = new Set(snap.items.map(p => p.repo)).size
   return (
-    <Box flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Box flexGrow={1}><Text dimColor size="footnote">{`${snap.items.length} open PRs · ${repos} repos · ${ago(snap.at, now)}`}</Text></Box>
+    <Box flexDirection="column" gap="xs">
+      <Box flexDirection="row" gap="sm" alignItems="center">
+        <Box flexGrow={1}><Text size="footnote" dimColor>{`${snap.items.length} open pull requests in ${repos} repos · ${ago(snap.at, now)}`}</Text></Box>
         <Button key="refresh" plain label="Refresh" onPress={() => void refreshPrs($, config, true)} />
       </Box>
-      {snap.error && <Text color="error" size="footnote">{`Fetch failed: ${snap.error}`}</Text>}
+      {snap.error && <Text color="error" size="footnote" wrap="wrap">{`Could not update: ${snap.error}`}</Text>}
       {GROUPS.map(g => {
         const rows = snap.items.filter(p => g.of.includes(p.group)).sort((a, b) => Number(b.group === 'need') - Number(a.group === 'need'))
-        if (!rows.length) return null
-        return (
-          <Box key={`grp-${g.id}`} flexDirection="column">
-            {Section(ui, g.label, rows.length)}
-            {rows.map(pr => PrRow(ui, $, config, pr, now))}
-          </Box>
-        )
+        return rows.length ? Section(ui, `grp-${g.id}`, g.label, rows.length, rows.map(pr => PrCard(ui, $, config, pr, now))) : null
       })}
-      {snap.items.length === 0 && !snap.error && <Text dimColor>No open PRs.</Text>}
+      {snap.items.length === 0 && !snap.error && <Text dimColor>No open pull requests.</Text>}
     </Box>
   )
 }
@@ -335,31 +336,30 @@ function PrView(ui: UI, $: $, config: Config, snap: PrSnapshot | null, now: numb
 function NoPlan(ui: UI, $: $) {
   const { Box, Text, Button } = ui
   return (
-    <Box flexDirection="column" gap={1}>
-      <Text dimColor>No active chantier.</Text>
-      <Text>Type /chantier followed by your epic's key: Claude reads the tickets and the code, then proposes here a breakdown per repo and wave, for you to approve before anything starts.</Text>
-      <Button key="start-plan" label="Plan a chantier…" onPress={() => fill($, '/chantier ')} />
+    <Box flexDirection="column" gap="sm" marginTop="md">
+      <Text size="heading" weight="semibold">No active chantier</Text>
+      <Text wrap="wrap" dimColor>Type /chantier followed by your epic's key. Claude reads the tickets and the code, then proposes a breakdown per repo and wave here, for you to approve before anything starts.</Text>
+      <Box flexDirection="row"><Button key="start-plan" variant="primary" label="Plan a chantier" onPress={() => fill($, '/chantier ')} /></Box>
     </Box>
   )
 }
 
-function BriqueLine(ui: UI, plan: Plan, b: Brique) {
-  const { Box, Text } = ui
-  const mark = STATUS_MARK[b.status]
+function briqueMeta(plan: Plan, b: Brique): string {
   const waits = waitsOn(plan, b)
-  const detail = [waits.length ? `waits on ${waits.join(', ')}` : '', b.note ?? ''].filter(Boolean).join(' · ')
-  return (
-    <Box key={`b-${b.id}`} flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Text color={mark.color}>{mark.glyph}</Text>
-        <Text mono weight="semibold">{b.id}</Text>
-        {b.ticket && <Text mono dimColor>{b.ticket}</Text>}
-        <Box flexGrow={1}><Text wrap="truncate-end">{b.title}</Text></Box>
-        <Text dimColor size="footnote">{b.executor}</Text>
-      </Box>
-      {detail && <Box paddingLeft={2}><Text dimColor size="footnote" wrap="wrap">{detail}</Text></Box>}
-    </Box>
-  )
+  return [b.id, b.ticket ?? '', b.executor === 'you' ? 'your decision' : b.executor, waits.length ? `waits on ${waits.join(', ')}` : ''].filter(Boolean).join(' · ')
+}
+
+function BriqueCard(ui: UI, plan: Plan, b: Brique, extra: RenderChildren = null) {
+  const { Text } = ui
+  const mark = STATUS_MARK[b.status]
+  const accent: ThemeKey | null = b.status === 'waiting' ? 'warning' : b.status === 'blocked' ? 'error' : null
+  return Card(ui, `b-${b.id}`, accent, [
+    <Text weight="medium" wrap="wrap">{b.title}</Text>,
+    <Text size="footnote" dimColor>{briqueMeta(plan, b)}</Text>,
+    Chips(ui, [{ text: mark.label, color: mark.color }]),
+    b.note ? <Text size="footnote" wrap="wrap">{b.note}</Text> : null,
+    extra,
+  ])
 }
 
 function PlanView(ui: UI, $: $, plan: Plan | null) {
@@ -369,30 +369,27 @@ function PlanView(ui: UI, $: $, plan: Plan | null) {
   const wave = currentWave(plan)
   const go = goPrompt(plan)
   return (
-    <Box flexDirection="column">
-      <Text weight="semibold">{`${plan.epic} · ${plan.title}`}</Text>
-      <Text dimColor size="footnote">{`${plan.briques.length} briques · ${lanes(plan).length} lanes · ${wave === null ? 'all done' : `current wave ${wave}`}`}</Text>
+    <Box flexDirection="column" gap="xs">
+      <Text size="title" weight="semibold" wrap="wrap">{plan.title}</Text>
+      <Text size="footnote" dimColor>{`${plan.epic} · ${plan.briques.length} briques · ${lanes(plan).length} lanes · ${wave === null ? 'all done' : `current wave ${wave}`}`}</Text>
+      <Box flexDirection="row" gap="sm" marginTop="sm" flexWrap="wrap">
+        {go && <Button key="go" variant="primary" label={`Start wave ${wave}`} onPress={() => fill($, go)} />}
+        <Button key="edit-plan" variant="secondary" label="Change the plan" onPress={() => fill($, `Change the plan of chantier ${plan.epic}: `)} />
+      </Box>
       {waves.map(w => {
         const inWave = plan.briques.filter(b => b.wave === w)
         const parallel = inWave.filter(b => b.executor === 'session' && !isDone(b)).length
         const summary = inWave.every(isDone) ? 'done' : parallel > 1 ? `${parallel} sessions in parallel` : `${inWave.length} brique${inWave.length > 1 ? 's' : ''}`
-        return (
-          <Box key={`wave-${w}`} flexDirection="column">
-            {Section(ui, `Wave ${w}`)}
-            <Text dimColor size="footnote">{summary}</Text>
-            {lanes(plan).filter(l => inWave.some(b => b.lane === l)).map(l => (
-              <Box key={`lane-${w}-${l}`} flexDirection="column" paddingLeft={1}>
-                <Text color={l === YOU_LANE ? 'warning' : 'subtle'} size="footnote" weight="medium">{l}</Text>
-                {inWave.filter(b => b.lane === l).map(b => BriqueLine(ui, plan, b))}
-              </Box>
-            ))}
-          </Box>
-        )
+        return Section(ui, `wave-${w}`, `Wave ${w}`, null, [
+          <Text size="footnote" dimColor>{summary}</Text>,
+          ...lanes(plan).filter(l => inWave.some(b => b.lane === l)).map(l => (
+            <Box key={`lane-${w}-${l}`} flexDirection="column" gap="xs">
+              <Text size="footnote" weight="semibold" color={l === YOU_LANE ? 'warning' : 'subtle'}>{l}</Text>
+              {inWave.filter(b => b.lane === l).map(b => BriqueCard(ui, plan, b))}
+            </Box>
+          )),
+        ])
       })}
-      <Box flexDirection="row" gap={1} marginTop={1} flexWrap="wrap">
-        {go && <Button key="go" variant="primary" label={`Start wave ${wave}`} onPress={() => fill($, go)} />}
-        <Button key="edit-plan" label="Change the plan" onPress={() => fill($, `Change the plan of chantier ${plan.epic}: `)} />
-      </Box>
     </Box>
   )
 }
@@ -408,42 +405,28 @@ function RunView(ui: UI, $: $, plan: Plan | null, snap: PrSnapshot | null) {
   const running = plan.briques.filter(b => b.status === 'running')
   const blocked = plan.briques.filter(b => !isDone(b) && b.status !== 'running' && waitsOn(plan, b).length > 0)
   return (
-    <Box flexDirection="column">
-      {Section(ui, 'Waiting on you', waiting.length)}
-      {waiting.length === 0 && <Text dimColor size="footnote">No open question.</Text>}
-      {waiting.map(b => (
-        <Box key={`ask-${b.id}`} flexDirection="column" borderStyle="round" borderColor="warning" paddingX={1}>
-          <Text weight="semibold">{`${b.id} · ${b.lane}`}</Text>
-          <Text wrap="wrap">{b.question ?? b.note ?? 'No question text'}</Text>
-          <Button key={`ask-open-${b.id}`} plain label="Open its session" onPress={() => fill($, `Open the session of brique ${b.id} of chantier ${plan.epic}${b.worktree ? ` (worktree ${b.worktree})` : ''}.`)} />
+    <Box flexDirection="column" gap="xs">
+      {Section(ui, 'waiting', 'Waiting on you', waiting.length, waiting.length ? waiting.map(b => Card(ui, `ask-${b.id}`, 'warning', [
+        <Text size="footnote" dimColor>{`${b.id} · ${b.lane}`}</Text>,
+        <Text weight="medium" wrap="wrap">{b.question ?? b.note ?? 'No question text'}</Text>,
+        <Box flexDirection="row" marginTop="xs"><Button key={`ask-open-${b.id}`} variant="secondary" label="Open its session" onPress={() => fill($, `Open the session of brique ${b.id} of chantier ${plan.epic}${b.worktree ? ` (worktree ${b.worktree})` : ''}.`)} /></Box>,
+      ])) : [<Text size="footnote" dimColor>No open question.</Text>])}
+      {Section(ui, 'repos', 'Per repo', null, lanes(plan).map(l => (
+        <Box key={`strip-${l}`} flexDirection="column" gap="xs">
+          <Text size="footnote" weight="semibold" color="subtle">{l}</Text>
+          {Chips(ui, plan.briques.filter(b => b.lane === l).map(b => ({ text: `${b.id} ${STATUS_MARK[b.status].label.toLowerCase()}`, color: STATUS_MARK[b.status].color })))}
         </Box>
-      ))}
-      {Section(ui, 'Per repo')}
-      {lanes(plan).map(l => (
-        <Box key={`strip-${l}`} flexDirection="row" gap={1} flexWrap="wrap">
-          <Box width={16}><Text dimColor wrap="truncate-end">{l}</Text></Box>
-          {plan.briques.filter(b => b.lane === l).map(b => (
-            <Text color={STATUS_MARK[b.status].color}>{`${STATUS_MARK[b.status].glyph} ${b.id}`}</Text>
-          ))}
-        </Box>
-      ))}
-      {Section(ui, 'Running', running.length)}
-      {running.map(b => {
+      )))}
+      {running.length > 0 && Section(ui, 'running', 'Running', running.length, running.map(b => {
         const pr = prOf(snap, b)
-        return (
-          <Box key={`run-${b.id}`} flexDirection="column">
-            {BriqueLine(ui, plan, b)}
-            {pr && <Box paddingLeft={2} flexDirection="row" gap={1} flexWrap="wrap">{prReasons(pr).map(r => <Text size="footnote" color={r.color}>{r.text}</Text>)}</Box>}
-          </Box>
-        )
-      })}
-      {blocked.length > 0 && Section(ui, 'Blocked', blocked.length)}
-      {blocked.map(b => <Text dimColor>{`${b.id} waits on ${waitsOn(plan, b).join(', ')}`}</Text>)}
+        return BriqueCard(ui, plan, b, pr ? Chips(ui, prChips(pr)) : null)
+      }))}
+      {blocked.length > 0 && Section(ui, 'blocked', 'Blocked', blocked.length, blocked.map(b => <Text size="footnote" dimColor wrap="wrap">{`${b.id} · ${b.title} · waits on ${waitsOn(plan, b).join(', ')}`}</Text>))}
     </Box>
   )
 }
 
-function LandView(ui: UI, $: $, plan: Plan | null, snap: PrSnapshot | null) {
+function LandView(ui: UI, $: $, config: Config, plan: Plan | null, snap: PrSnapshot | null) {
   const { Box, Text, Button, Link } = ui
   const backports = (snap?.items ?? []).filter(p => p.backportOf !== null)
   const bySource = new Map<number, PrItem[]>()
@@ -451,31 +434,30 @@ function LandView(ui: UI, $: $, plan: Plan | null, snap: PrSnapshot | null) {
   const order = plan ? mergeOrder(plan) : []
   const trees = plan?.briques.filter(b => b.worktree) ?? []
   return (
-    <Box flexDirection="column">
-      {plan ? Section(ui, `Merge order · ${plan.epic}`) : NoPlan(ui, $)}
-      {order.map((b, i) => {
-        const pr = prOf(snap, b)
-        return (
-          <Box key={`land-${b.id}`} flexDirection="row" gap={1}>
-            <Text dimColor tabular>{`${i + 1}.`}</Text>
-            <Text color={STATUS_MARK[b.status].color}>{STATUS_MARK[b.status].glyph}</Text>
-            <Text mono weight="semibold">{b.id}</Text>
-            <Box flexGrow={1}><Text wrap="truncate-end">{b.title}</Text></Box>
-            {pr ? <Link href={pr.url} label={`#${pr.number}`} /> : <Text dimColor size="footnote">{isDone(b) ? 'merged' : 'no PR'}</Text>}
+    <Box flexDirection="column" gap="xs">
+      {plan ? Section(ui, 'order', 'Merge order', order.length, [
+        ...order.map((b, i) => {
+          const pr = prOf(snap, b)
+          return Card(ui, `land-${b.id}`, null, [
+            <Text weight="medium" wrap="wrap">{`${i + 1}. ${b.title}`}</Text>,
+            <Text size="footnote" dimColor>{briqueMeta(plan, b)}</Text>,
+            Chips(ui, pr ? prChips(pr) : [{ text: isDone(b) ? 'Merged' : 'No pull request yet', color: isDone(b) ? 'success' : 'inactive' }]),
+            pr ? <Box flexDirection="row"><Link href={pr.url} label="Open PR" /></Box> : null,
+          ])
+        }),
+        <Box flexDirection="row" marginTop="xs"><Button key="tickets" variant="secondary" label="Prepare the ticket transitions" onPress={() => fill($, `Prepare the ticket transitions of chantier ${plan.epic}: for each brique, the status its ticket should have given its PR. Transition nothing without my go-ahead.`)} /></Box>,
+      ]) : NoPlan(ui, $)}
+      {Section(ui, 'backports', 'Open backports', backports.length, backports.length ? [...bySource.entries()].map(([source, list]) => Card(ui, `bp-${source}`, list.some(p => p.isConflict || p.checks.fail) ? 'error' : null, [
+        <Text weight="medium">{`Backports of #${source}`}</Text>,
+        <Text size="footnote" dimColor>{repoLabel(config, list[0]?.repo ?? '')}</Text>,
+        ...list.map(p => (
+          <Box key={`bpr-${p.number}`} flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+            <Link href={p.url} label={`${p.base} · #${p.number}`} />
+            {Chips(ui, prChips(p))}
           </Box>
-        )
-      })}
-      {plan && <Button key="tickets" plain label="Prepare the ticket transitions" onPress={() => fill($, `Prepare the ticket transitions of chantier ${plan.epic}: for each brique, the status its ticket should have given its PR. Transition nothing without my go-ahead.`)} />}
-      {Section(ui, 'Open backports', backports.length)}
-      {backports.length === 0 && <Text dimColor size="footnote">No open Mergify backport.</Text>}
-      {[...bySource.entries()].map(([source, list]) => (
-        <Box key={`bp-${source}`} flexDirection="row" gap={1} flexWrap="wrap">
-          <Text mono>{`#${source}`}</Text>
-          {list.map(p => <Link href={p.url} label={`${p.base} #${p.number} ${p.isConflict || p.checks.fail ? '✗' : p.group === 'ready' ? '✓ ready' : '◎'}`} />)}
-        </Box>
-      ))}
-      {plan && Section(ui, 'Chantier worktrees', trees.length)}
-      {trees.map(b => <Text dimColor size="footnote">{`${b.id} · ${b.worktree}${isDone(b) ? ' · to clean' : ''}`}</Text>)}
+        )),
+      ])) : [<Text size="footnote" dimColor>No open Mergify backport.</Text>])}
+      {plan && trees.length > 0 && Section(ui, 'trees', 'Chantier worktrees', trees.length, trees.map(b => <Text size="footnote" dimColor wrap="wrap">{`${b.id} · ${b.worktree}${isDone(b) ? ' · ready to clean' : ''}`}</Text>))}
     </Box>
   )
 }
@@ -597,7 +579,7 @@ export const register: Register = (on, options) => {
       const next = unblocks(applied.plan, b.id)
       if (next.length) $.ui.toast(`${b.id} done: unblocks ${next.join(', ')}. /chantier go starts them.`, { timeoutMs: 15_000 })
     }
-    return { result: `${b.id}: ${STATUS_MARK[b.status].label}.` }
+    return { result: `${b.id}: ${STATUS_MARK[b.status].label.toLowerCase()}.` }
   })
 
   on('prompt.compose', async ($, e, next) => {
@@ -612,17 +594,18 @@ export const register: Register = (on, options) => {
     const ui: UI = $.ui.resolve(e)
     const { Box } = ui
     const view = await read($, viewA)
-    const snap = await read($, prsA)
+    // Before this session's first refresh lands, draw the snapshot another session already shared.
+    const snap = (await read($, prsA)) ?? ((await $.store.get('prs')) as PrSnapshot | undefined) ?? null
     const plan = await read($, planA)
     const now = await $.clock.now()
     const act = snap?.items.filter(p => p.group === 'need' || p.group === 'ready').length ?? 0
     return (
-      <Box flexDirection="column" gap={1} paddingX={1}>
+      <Box flexDirection="column" gap="sm" paddingX="sm" paddingY="sm">
         {Switcher(ui, $, view, act)}
         {view === 'pr' && PrView(ui, $, config, snap, now)}
         {view === 'plan' && PlanView(ui, $, plan)}
         {view === 'run' && RunView(ui, $, plan, snap)}
-        {view === 'land' && LandView(ui, $, plan, snap)}
+        {view === 'land' && LandView(ui, $, config, plan, snap)}
       </Box>
     )
   })
@@ -641,14 +624,14 @@ export const register: Register = (on, options) => {
     const unblocked = brique && plan ? unblocks(plan, brique.id) : []
     const waits = brique && plan ? waitsOn(plan, brique) : []
     return (
-      <Box flexDirection="row" gap={2} flexWrap="wrap" paddingX={1}>
-        {brique && <Text weight="semibold">{`${brique.id} · wave ${brique.wave}`}</Text>}
+      <Box flexDirection="row" gap="md" flexWrap="wrap" alignItems="center" paddingX="sm">
+        {brique && <Text size="footnote" weight="semibold">{`${brique.id} · wave ${brique.wave}`}</Text>}
         {ticket && TicketLink(ui, config, ticket)}
-        {waits.length > 0 && <Text color="warning">{`waits on ${waits.join(', ')}`}</Text>}
-        {unblocked.length > 0 && <Text dimColor>{`unblocks ${unblocked.join(', ')}`}</Text>}
+        {waits.length > 0 && <Text size="footnote" color="warning">{`waits on ${waits.join(', ')}`}</Text>}
+        {unblocked.length > 0 && <Text size="footnote" dimColor>{`unblocks ${unblocked.join(', ')}`}</Text>}
         {pr && <Link href={pr.url} label={`#${pr.number}`} />}
-        {pr && prReasons(pr).slice(0, 3).map(r => <Text color={r.color}>{r.text}</Text>)}
-        {!pr && here?.branch && <Text dimColor>no PR</Text>}
+        {pr && prChips(pr).slice(0, 3).map(c => <Text size="footnote" weight="medium" color={c.color}>{c.text}</Text>)}
+        {!pr && here?.branch && <Text size="footnote" dimColor>no pull request yet</Text>}
       </Box>
     )
   })
