@@ -20,6 +20,12 @@
       "description": "A ticket key is appended to it for links, e.g. https://example.atlassian.net/browse/. Empty shows keys without links.",
       "default": ""
     },
+    "repoAliases": {
+      "type": "string",
+      "title": "Repo labels",
+      "description": "repo=label pairs, comma-separated, for shorter names in the pane (e.g. my-very-long-ui-library=ui). Empty shows repo names.",
+      "default": ""
+    },
     "clones": {
       "type": "string",
       "title": "Local clones",

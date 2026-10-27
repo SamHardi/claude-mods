@@ -53,9 +53,10 @@ export function checksOf(rollup: GhCheck[] | null | undefined): PrChecks {
 
 export function groupOf(pr: Pick<PrItem, 'isDraft' | 'review' | 'isConflict' | 'checks' | 'updatedAt'>, now: number, staleDays: number): PrGroup {
   if (pr.isDraft) return 'draft'
+  // A PR nobody touched for weeks is stale first: its old conflict is not today's emergency.
+  if (now - Date.parse(pr.updatedAt) > staleDays * 86_400_000) return 'stale'
   if (pr.isConflict || pr.checks.fail > 0 || pr.review === 'CHANGES_REQUESTED') return 'need'
   if (pr.review === 'APPROVED' && pr.checks.pending === 0) return 'ready'
-  if (now - Date.parse(pr.updatedAt) > staleDays * 86_400_000) return 'stale'
   return 'review'
 }
 

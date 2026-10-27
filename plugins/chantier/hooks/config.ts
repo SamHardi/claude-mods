@@ -14,6 +14,8 @@ export type Config = {
   staleDays: number
   /** Where plans live, relative to $HOME: outside every repo. */
   planDir: string
+  /** Repo name → short label shown in the pane. */
+  aliases: Record<string, string>
 }
 
 const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
@@ -38,7 +40,13 @@ export function configOf(options: PluginOptions): Config {
     backportRepos: list(options.backportRepos),
     staleDays: Number.isFinite(stale) && stale > 0 ? stale : 30,
     planDir: text(options.planDir) || '.claude/chantiers',
+    aliases: Object.fromEntries(list(options.repoAliases).map(e => e.split('=').map(x => x.trim())).filter(([k, v]) => k && v)),
   }
+}
+
+/** The short label of a repo in the pane: its alias, or its name. */
+export function repoLabel(config: Pick<Config, 'aliases'>, repo: string): string {
+  return config.aliases[repo] ?? repo
 }
 
 export const PR_TTL_MS = 120_000

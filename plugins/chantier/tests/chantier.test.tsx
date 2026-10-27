@@ -29,6 +29,7 @@ test('a PR is grouped by what it waits for', () => {
   expect(groupOf(pr({ review: 'APPROVED', checks: { ok: 3, fail: 0, pending: 3 } }), NOW, 30)).toBe('review')
   expect(groupOf(pr({ isDraft: true, isConflict: true }), NOW, 30)).toBe('draft')
   expect(groupOf(pr({ updatedAt: '2026-05-23T10:00:00Z' }), NOW, 30)).toBe('stale')
+  expect(groupOf(pr({ updatedAt: '2026-05-23T10:00:00Z', isConflict: true }), NOW, 30)).toBe('stale')
 })
 
 test('checks, tickets and changes read gh the way it answers', () => {
@@ -85,8 +86,29 @@ test('the plan view draws the waves on every surface', async ($, on) => {
       plugin: 'chantier', component: 'Pane', requestId: 'chantier', surface,
       props: { title: 'Chantier', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
     })
-    expect((await ui.find({ type: 'Text', text: /PROJ-157/ }))?.text).toContain('One permission model')
+    expect((await ui.find({ type: 'Text', text: /^One permission model$/ }))?.text).toBe('One permission model')
+    expect((await ui.find({ type: 'Text', text: /^PROJ-157 · 4 briques/ }))?.text).toContain('current wave 1')
     expect(await ui.find({ type: 'Text', text: /^Wave 2$/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('the PR view draws cards with titles, labels and actions', { options: { repoAliases: 'acme-ui=ui' } }, async ($, on) => {
+  const snapshot = { at: NOW, error: null, items: [pr({ isConflict: true, group: 'need', title: 'Scope the filters' }), pr({ number: 135, title: 'Show failures', group: 'review' })] }
+  on('clock.now', () => ({ value: NOW + 1_000 }))
+  on('store.get', (_, e) => ({ value: (e as { key: string }).key === 'prs' ? snapshot : undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('store.delete', () => ({ value: undefined }))
+  on('env.get', () => ({ value: '/home/test' }))
+  on('fs.exists', () => ({ value: false }))
+  on('ui.log', () => ({ value: undefined }))
+  const ui = await $.ui.mount({
+    plugin: 'chantier', component: 'Pane', requestId: 'chantier', surface: 'desktop',
+    props: { title: 'Chantier', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+  })
+  expect((await ui.find({ type: 'Text', text: /^Scope the filters$/ }))?.text).toBe('Scope the filters')
+  expect((await ui.find({ type: 'Text', text: /^ui · #134/ }))?.text).toContain('ui · #134')
+  expect((await ui.find({ type: 'Text', text: /^Conflict$/ }))?.text).toBe('Conflict')
+  expect(await ui.find({ type: 'Button', key: 'sess-acme-ui-134' })).toBeDefined()
+  await ui.unmount()
 })
