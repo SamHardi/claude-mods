@@ -175,7 +175,8 @@ function goPrompt(plan: Plan): string | null {
   const blocked = inWave.filter(b => waitsOn(plan, b).length > 0).map(b => `${b.id} waits on ${waitsOn(plan, b).join(', ')}`)
   return [
     `Start wave ${wave} of chantier ${plan.epic}.`,
-    sessions.length ? `Session briques (${sessions.join(', ')}): start one linked session per brique, each in its own worktree, with a brief (ticket, repo, branch, satisfied dependencies, decisions taken), then call brique_update (status running, branch, worktree).` : '',
+    sessions.length ? `Session briques (${sessions.join(', ')}): start one linked session per brique, each in its own worktree, titled \`<ticket> | <brique title>\`, with a brief (ticket, repo, branch, satisfied dependencies, decisions taken), then call brique_update (status running, branch, worktree).` : '',
+    `File this lead session in the sidebar section \`${plan.epic} · ${plan.title}\` (create it if it does not exist yet); linked sessions follow their lead.`,
     workflows.length ? `Workflow briques (${workflows.join(', ')}): propose the workflow without running it.` : '',
     decisions.length ? `Open decisions: ${decisions.join('; ')}. Ask me first.` : '',
     blocked.length ? `Start nothing for ${blocked.join('; ')}.` : '',
