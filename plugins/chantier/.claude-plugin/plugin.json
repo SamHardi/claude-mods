@@ -1,0 +1,48 @@
+{
+  "name": "chantier",
+  "version": "0.1.0",
+  "description": "A pane for multi-session work: your open PRs grouped by what they wait for (with their PR, session and ticket links), a plan of briques per repo and wave that Claude proposes and you approve, a run view of who waits on you, and a landing view (merge order, backports). Plus a band above the prompt and relay toasts.",
+  "author": {
+    "name": "Sam Hardi",
+    "url": "https://github.com/SamHardi"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "owner": {
+      "type": "string",
+      "title": "GitHub owner",
+      "description": "Org or user your PR search is limited to. Empty searches every repo.",
+      "default": ""
+    },
+    "ticketUrl": {
+      "type": "string",
+      "title": "Ticket URL prefix",
+      "description": "A ticket key is appended to it for links, e.g. https://example.atlassian.net/browse/. Empty shows keys without links.",
+      "default": ""
+    },
+    "clones": {
+      "type": "string",
+      "title": "Local clones",
+      "description": "repo=path entries separated by commas (several paths with |), absolute or relative to your home, scanned to find the worktree of a PR's branch.",
+      "default": ""
+    },
+    "backportRepos": {
+      "type": "string",
+      "title": "Backport repos",
+      "description": "Comma-separated repos (name, or owner/name) whose open Mergify backports of your merged PRs are tracked.",
+      "default": ""
+    },
+    "staleDays": {
+      "type": "number",
+      "title": "Stale after (days)",
+      "description": "An open PR with no activity for this long is listed as stale.",
+      "default": 30
+    },
+    "planDir": {
+      "type": "string",
+      "title": "Plan folder",
+      "description": "Where plans are saved, relative to your home. Keep it outside your repos.",
+      "default": ".claude/chantiers"
+    }
+  }
+}

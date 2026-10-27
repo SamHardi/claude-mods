@@ -1,0 +1,23 @@
+{
+  "name": "dev-loop",
+  "version": "0.1.0",
+  "description": "Status line for a local dev loop: which ports are up, and which folder (desk, worktree) serves each, so parallel sessions know whose server they are hitting.",
+  "author": {
+    "name": "Sam Hardi",
+    "url": "https://github.com/SamHardi"
+  },
+  "userConfig": {
+    "ports": {
+      "type": "string",
+      "title": "Ports",
+      "description": "Comma-separated port:label pairs to watch, e.g. 3000:web,8080:api. Empty shows nothing.",
+      "default": ""
+    },
+    "roots": {
+      "type": "string",
+      "title": "Folders",
+      "description": "Comma-separated folders (absolute, or relative to your home) whose sessions show the line. Empty shows it everywhere.",
+      "default": ""
+    }
+  }
+}

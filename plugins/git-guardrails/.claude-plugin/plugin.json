@@ -1,0 +1,24 @@
+{
+  "name": "git-guardrails",
+  "version": "0.1.0",
+  "description": "Refuses risky git, gh and docker commands before they run: direct pushes to protected branches, PRs based on feature branches, commit subjects over 72 characters or with '!', AI attribution, a compose stack started without its env variable, and two sessions switching branches in one checkout.",
+  "author": {
+    "name": "Sam Hardi",
+    "url": "https://github.com/SamHardi"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "protectedBranches": {
+      "type": "string",
+      "title": "Protected branches",
+      "description": "Comma-separated branches nobody pushes to directly.",
+      "default": "main,master,develop"
+    },
+    "composeEnv": {
+      "type": "string",
+      "title": "Compose env check",
+      "description": "dir:VARIABLE. `docker compose up` under a path containing dir is refused unless VARIABLE appears in the command (for a variable a non-interactive shell would miss). Empty turns the rule off.",
+      "default": ""
+    }
+  }
+}

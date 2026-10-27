@@ -1,0 +1,22 @@
+{
+  "name": "claude-mods",
+  "description": "Claude Code mods for multi-session work: a chantier pane (PRs, plan per repo and wave, run, landing), git guardrails, and a dev-loop status line.",
+  "owner": {
+    "name": "Sam Hardi",
+    "url": "https://github.com/SamHardi"
+  },
+  "plugins": [
+    {
+      "name": "chantier",
+      "source": "./plugins/chantier"
+    },
+    {
+      "name": "git-guardrails",
+      "source": "./plugins/git-guardrails"
+    },
+    {
+      "name": "dev-loop",
+      "source": "./plugins/dev-loop"
+    }
+  ]
+}
