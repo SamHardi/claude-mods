@@ -181,3 +181,18 @@ test('the PR view leads with the next PR and draws pills, links and actions', { 
     await ui.unmount()
   }
 })
+
+test('/chantier on an epic with no plan asks to catch up and align before planning', async ($, on) => {
+  const filled: string[] = []
+  on('prompt.fill', (_, e) => { filled.push((e as { text: string }).text); return { isFilled: true } })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('env.get', () => ({ value: '/home/test' }))
+  on('fs.exists', () => ({ value: false }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  const answer = await $.command.run({ command: 'chantier', args: 'proj-9' } as Parameters<typeof $.command.run>[0])
+  const prompt = filled.at(-1) ?? ''
+  expect(JSON.stringify(answer)).toContain('No plan yet for PROJ-9')
+  expect(prompt).toContain('Then wait for my answers')
+  expect(prompt.indexOf('Then wait for my answers') < prompt.indexOf('find the repos')).toBe(true)
+})

@@ -202,11 +202,12 @@ async function refreshStatus($: $): Promise<void> {
 
 function planningPrompt(epic: string): string {
   return [
-    `Break chantier ${epic} into briques and propose the plan with the plan_write tool. Open no session and change no code.`,
-    `1. Read the epic ${epic}, its child tickets, and the branches or PRs already open for them.`,
-    '2. For each ticket, find the repos and folders it touches (git grep, git log).',
-    `3. One brique = 1 ticket = 1 repo = 1 branch = 1 PR. Lane = the repo, or the part of a repo that moves separately (backend, console); "${YOU_LANE}" for a decision of mine.`,
-    '4. Waves: everything in one wave runs in parallel. Different repos with no dependency: same wave. Same repo, separate folders: parallel, risk noted. Same files: one after the other. Dependency through a release (library to module, endpoint to UI): next wave, noted "can start on a local build". Repeated change (backports, N modules): executor workflow. Blocking decision: executor you. Work already merged: wave 0, status done.',
+    `Lead chantier ${epic}: catch up, align with me, then propose the plan with the plan_write tool. Open no session, change no code and no ticket until I say so.`,
+    `1. Catch up: the epic ${epic}, its child tickets and their comments, the earlier sessions on it (search the session transcripts for ${epic}), the canvases or reports they left, and the branches or PRs already open.`,
+    '2. Tell me where it stands: what changed since the earlier work; a table of decisions and visuals (still valid, to change, obsolete); a table of tickets (keep, re-scope, defer, missing); the questions only I can answer, numbered. Then wait for my answers.',
+    '3. Once we agree, find the repos and folders each ticket touches (git grep, git log).',
+    `4. One brique = 1 ticket = 1 repo = 1 branch = 1 PR. Lane = the repo, or the part of a repo that moves separately (backend, console); "${YOU_LANE}" for a decision of mine.`,
+    '5. Waves: everything in one wave runs in parallel. Different repos with no dependency: same wave. Same repo, separate folders: parallel, risk noted. Same files: one after the other. Dependency through a release (library to module, endpoint to UI): next wave, noted "can start on a local build". Repeated change (backports, N modules): executor workflow. Blocking decision: executor you. Work already merged: wave 0, status done.',
   ].join('\n')
 }
 
@@ -703,7 +704,7 @@ export const register: Register = (on, options) => {
       }
       await fill($, planningPrompt(epic))
       await open('plan')
-      return { text: `No plan yet for ${epic}: the planning prompt is in the input box.` }
+      return { text: `No plan yet for ${epic}: the lead prompt is in the input box (catch up, align, then plan).` }
     }
     return { text: 'Usage: /chantier [prs | plan | run | land | go | status | refresh | export | off | <EPIC>]' }
   })
