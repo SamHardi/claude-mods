@@ -1,7 +1,7 @@
 // Your open PRs and the Mergify backports of your merged ones, read through gh, sorted by what they wait for.
 
 import type { Config } from './config'
-import type { PrChecks, PrGroup, PrItem } from '../types'
+import type { PrChecks, PrGroup, PrItem, SessionRef } from '../types'
 
 export type Run = (argv: string[], cwd?: string) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 
@@ -78,6 +78,7 @@ export function toItem(repo: string, pr: GhPr, now: number, staleDays: number, w
     worktree: worktrees.get(`${repo}:${pr.headRefName}`) ?? null,
     backportOf: bp ? Number(bp[2]) : null,
     base: bp ? (bp[1] as string) : pr.baseRefName ?? null,
+    session: null,
   }
   return { ...base, group: groupOf(base, now, staleDays) }
 }
@@ -153,4 +154,48 @@ export function changes(before: PrItem[], after: PrItem[]): string[] {
     if (!next.has(key)) out.push(`PR closed or merged · ${key}`)
   }
   return out
+}
+
+/** A session as the desktop app lists it (mcp__ccd_session_mgmt__list_sessions). */
+export type AppSession = { sessionId: string; title?: string; branch?: string; cwd?: string; link?: string; prNumber?: number; isArchived?: boolean }
+
+/** The app's session list, from whatever shape a tool call hands back: a JSON text, content blocks, or the array. */
+export function parseSessions(answer: unknown): AppSession[] {
+  const texts: string[] = []
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') texts.push(v)
+    else if (Array.isArray(v)) v.forEach(walk)
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      if (typeof o.sessionId === 'string') texts.push(JSON.stringify([o]))
+      else for (const key of ['text', 'result', 'content']) if (key in o) walk(o[key])
+    }
+  }
+  walk(answer)
+  for (const text of texts) {
+    try {
+      const parsed = JSON.parse(text) as unknown
+      if (Array.isArray(parsed) && parsed.every(x => x && typeof x === 'object' && 'sessionId' in x)) return parsed as AppSession[]
+    } catch {
+      // Not the JSON list: a status line or a note, the next block may hold it.
+    }
+  }
+  return []
+}
+
+/** The open session working on a PR: its own PR number (or the backported one), then branch, worktree, and a title led by its ticket key. */
+export function sessionFor(pr: Pick<PrItem, 'number' | 'backportOf' | 'branch' | 'worktree' | 'ticket'>, sessions: AppSession[]): SessionRef | null {
+  const open = sessions.filter(x => !x.isArchived)
+  const ticket = pr.ticket ? new RegExp(`^${pr.ticket}\\b`, 'i') : null
+  const hit = open.find(x => x.prNumber === pr.number)
+    ?? open.find(x => x.branch === pr.branch)
+    ?? (pr.backportOf ? open.find(x => x.prNumber === pr.backportOf) : undefined)
+    ?? (pr.worktree ? open.find(x => x.cwd === pr.worktree) : undefined)
+    ?? (ticket ? open.find(x => ticket.test(x.title ?? '')) : undefined)
+  return hit ? { id: hit.sessionId, title: hit.title ?? hit.sessionId, link: hit.link ?? null } : null
+}
+
+/** Checks still pending a day after the PR last moved are stuck, not running. */
+export function isCiStuck(pr: Pick<PrItem, 'checks' | 'updatedAt'>, now: number): boolean {
+  return pr.checks.pending > 0 && now - Date.parse(pr.updatedAt) > 86_400_000
 }

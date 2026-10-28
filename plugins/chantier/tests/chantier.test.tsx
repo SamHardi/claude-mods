@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changes, checksOf, groupOf, ticketOf } from '../hooks/prs'
+import { changes, checksOf, groupOf, isCiStuck, parseSessions, sessionFor, ticketOf } from '../hooks/prs'
 import { mergeOrder, unblocks, validatePlan, waitsOn } from '../hooks/plan'
+import { pillsSvg, textWidth } from '../hooks/pills'
+import { actionOf, nextUp, prPills, routed, shown } from '../hooks/triage'
 import type { Plan, PrItem } from '../types'
 
 const NOW = Date.parse('2026-10-27T15:00:00Z')
@@ -9,7 +11,7 @@ const NOW = Date.parse('2026-10-27T15:00:00Z')
 const pr = (over: Partial<PrItem>): PrItem => ({
   repo: 'acme-ui', number: 134, title: 't', url: 'https://example.test/pr/134', branch: 'feat/PROJ-165-x',
   isDraft: false, updatedAt: '2026-10-26T10:00:00Z', review: 'REVIEW_REQUIRED', isConflict: false,
-  checks: { ok: 6, fail: 0, pending: 0 }, ticket: 'PROJ-165', group: 'review', worktree: null, backportOf: null, base: 'main', ...over,
+  checks: { ok: 6, fail: 0, pending: 0 }, ticket: 'PROJ-165', group: 'review', worktree: null, backportOf: null, base: 'main', session: null, ...over,
 })
 
 const PLAN = {
@@ -45,6 +47,26 @@ test('checks, tickets and changes read gh the way it answers', () => {
     'Conflict · acme-ui#134',
     'PR closed or merged · acme-ui#135',
   ])
+})
+
+test('a PR finds its session by branch, then worktree, then ticket in the title', () => {
+  const sessions = parseSessions({ content: [{ type: 'text', text: JSON.stringify([
+    { sessionId: 'local_a', title: 'PROJ-165 | Workspace scope', branch: 'claude/other', link: 'claude://a' },
+    { sessionId: 'local_b', title: 'Something else', branch: 'feat/PROJ-170-x', link: 'claude://b' },
+    { sessionId: 'local_d', title: 'Source fix', prNumber: 21834 },
+    { sessionId: 'local_c', title: 'SUP-14493 | Investigation', isArchived: true },
+  ]) }] })
+  expect(sessions.length).toBe(4)
+  expect(sessionFor(pr({ number: 21845, branch: 'mergify/bp/4.12.x/pr-21834', backportOf: 21834, ticket: null }), sessions)?.id).toBe('local_d')
+  expect(sessionFor(pr({ branch: 'feat/PROJ-170-x', ticket: 'PROJ-170' }), sessions)?.id).toBe('local_b')
+  expect(sessionFor(pr({ branch: 'mergify/bp/4.12.x/pr-1', ticket: 'PROJ-165' }), sessions)?.link).toBe('claude://a')
+  expect(sessionFor(pr({ branch: 'x', ticket: 'SUP-14493' }), sessions)).toBeNull()
+  expect(parseSessions('not json')).toEqual([])
+})
+
+test('checks pending a day after the last move are stuck', () => {
+  expect(isCiStuck(pr({ checks: { ok: 11, fail: 0, pending: 1 }, updatedAt: '2026-05-26T10:00:00Z' }), NOW)).toBe(true)
+  expect(isCiStuck(pr({ checks: { ok: 3, fail: 0, pending: 3 }, updatedAt: '2026-10-27T14:00:00Z' }), NOW)).toBe(false)
 })
 
 test('a plan is refused with every reason, and a cycle is caught', () => {
@@ -93,8 +115,42 @@ test('the plan view draws the waves on every surface', async ($, on) => {
   }
 })
 
-test('the PR view draws cards with titles, labels and actions', { options: { repoAliases: 'acme-ui=ui' } }, async ($, on) => {
-  const snapshot = { at: NOW, error: null, items: [pr({ isConflict: true, group: 'need', title: 'Scope the filters' }), pr({ number: 135, title: 'Show failures', group: 'review' })] }
+test('the most urgent PR comes next, and its job goes to the session working on it', () => {
+  const conflict = pr({ number: 1, isConflict: true, group: 'need', updatedAt: '2026-10-25T10:00:00Z' })
+  const failing = pr({ number: 2, checks: { ok: 4, fail: 2, pending: 0 }, group: 'need', updatedAt: '2026-10-20T10:00:00Z' })
+  const ready = pr({ number: 3, review: 'APPROVED', group: 'ready' })
+  const waiting = pr({ number: 4 })
+  expect(nextUp([waiting, ready, failing, conflict], NOW)?.number).toBe(1)
+  expect(nextUp([waiting, ready, failing], NOW)?.number).toBe(2)
+  expect(nextUp([waiting], NOW)).toBeNull()
+  expect(shown([waiting, ready, failing, conflict], 'act', '', NOW).map(p => p.number)).toEqual([1, 2, 3])
+  expect(actionOf(failing, NOW)?.label).toBe('Triage CI')
+  expect(actionOf(pr({ isConflict: true, backportOf: 21834, base: '4.12.x' }), NOW)?.task).toContain('to 4.12.x')
+  expect(actionOf(waiting, NOW)).toBeNull()
+  const session = { id: 'local_a', title: 'PROJ-165 | Scope', link: null }
+  expect(routed(pr({ session }), 'Do it.')).toContain('Send this to session local_a ("PROJ-165 | Scope")')
+  expect(routed(pr({ worktree: '/w/acme-ui-165' }), 'Do it.')).toContain('Start a session in /w/acme-ui-165')
+})
+
+test('pills say the state in words and wrap within the room given', () => {
+  const pills = prPills(pr({ checks: { ok: 3, fail: 0, pending: 1 }, updatedAt: '2026-10-27T14:00:00Z', backportOf: 9, base: '4.12.x', review: 'APPROVED' }), NOW)
+  expect(pills.map(p => p.text)).toEqual(['Approved', 'CI 3/4', '4.12.x'])
+  expect(pills[1]?.progress).toBe(0.75)
+  const one = pillsSvg([{ text: 'Conflict <a>', tone: 'red', glyph: 'cross' }], 400)
+  expect(one.source).toContain('Conflict &lt;a&gt;')
+  expect(one.source).toContain('prefers-color-scheme:dark')
+  expect(one.height).toBe(20)
+  const many = pillsSvg(Array.from({ length: 6 }, () => ({ text: 'Changes requested', tone: 'red' as const })), 200)
+  expect(many.width <= 200).toBe(true)
+  expect(many.height > 20).toBe(true)
+  expect(textWidth('mm') > textWidth('ii')).toBe(true)
+})
+
+test('the PR view leads with the next PR and draws pills, links and actions', { options: { repoAliases: 'acme-ui=ui' } }, async ($, on) => {
+  const snapshot = { at: NOW, error: null, items: [
+    pr({ isConflict: true, group: 'need', title: 'Scope the filters', session: { id: 'local_a', title: 'PROJ-165 | Scope', link: 'claude://claude.ai/epitaxy/local_a' } }),
+    pr({ number: 135, title: 'Show failures', group: 'review' }),
+  ] }
   on('clock.now', () => ({ value: NOW + 1_000 }))
   on('store.get', (_, e) => ({ value: (e as { key: string }).key === 'prs' ? snapshot : undefined }))
   on('store.set', () => ({ value: undefined }))
@@ -102,13 +158,26 @@ test('the PR view draws cards with titles, labels and actions', { options: { rep
   on('env.get', () => ({ value: '/home/test' }))
   on('fs.exists', () => ({ value: false }))
   on('ui.log', () => ({ value: undefined }))
-  const ui = await $.ui.mount({
-    plugin: 'chantier', component: 'Pane', requestId: 'chantier', surface: 'desktop',
-    props: { title: 'Chantier', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
-  })
-  expect((await ui.find({ type: 'Text', text: /^Scope the filters$/ }))?.text).toBe('Scope the filters')
-  expect((await ui.find({ type: 'Text', text: /^ui · #134/ }))?.text).toContain('ui · #134')
-  expect((await ui.find({ type: 'Text', text: /^Conflict$/ }))?.text).toBe('Conflict')
-  expect(await ui.find({ type: 'Button', key: 'sess-acme-ui-134' })).toBeDefined()
-  await ui.unmount()
+  const runs: string[] = []
+  on('process.run', (_, e) => { runs.push(JSON.stringify(e)); return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const ui = await $.ui.mount({
+      plugin: 'chantier', component: 'Pane', requestId: 'chantier', surface,
+      props: { title: 'Chantier', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+    })
+    expect((await ui.find({ type: 'Text', text: /^1 PR needs you$/ }))?.text).toBe('1 PR needs you')
+    expect((await ui.find({ type: 'Text', text: /^Next up$/ }))?.text).toBe('Next up')
+    expect((await ui.find({ type: 'Text', text: /^Scope the filters$/ }))?.text).toBe('Scope the filters')
+    expect((await ui.find({ type: 'Text', text: /^Conflicts with main\.$/ }))?.text).toBe('Conflicts with main.')
+    expect(await ui.find({ type: 'Button', key: 'act-acme-ui-134' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /^PROJ-165 \| Scope$/ }))?.text).toBe('PROJ-165 | Scope')
+    expect(await ui.find({ type: 'Button', key: 'sess-acme-ui-135' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'copy-acme-ui-134' })).toBeUndefined()
+    await ui.press({ key: 'goto-acme-ui-134' })
+    expect(runs.at(-1)).toContain('"claude://claude.ai/epitaxy/local_a"')
+    expect(await ui.find({ type: 'Button', key: 'filter-review' })).toBeDefined()
+    if (surface === 'desktop') expect(await ui.find({ type: 'Svg' })).toBeDefined()
+    else expect((await ui.find({ type: 'Text', text: /^✕ Conflict$/ }))?.text).toBe('✕ Conflict')
+    await ui.unmount()
+  }
 })

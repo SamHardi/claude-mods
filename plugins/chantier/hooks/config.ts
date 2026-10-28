@@ -58,4 +58,6 @@ export const MAX_TOASTS_PER_REFRESH = 3
 export const BIN: Record<string, readonly string[]> = {
   gh: ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh'],
   git: ['/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git'],
+  /** Hands a session's claude:// link to the desktop app, which shows that session. */
+  open: ['/usr/bin/open'],
 }

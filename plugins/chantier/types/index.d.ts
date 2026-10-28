@@ -18,11 +18,18 @@ export type PrItem = {
   worktree: string | null
   backportOf: number | null
   base: string | null
+  /** The open session working on this PR (same PR number, branch, worktree or ticket). */
+  session: SessionRef | null
 }
+
+export type SessionRef = { id: string; title: string; link: string | null }
 
 export type PrSnapshot = { at: number; items: PrItem[]; error: string | null }
 
 export type View = 'pr' | 'plan' | 'run' | 'land'
+
+/** Which PRs the PR view lists, by what they wait for. */
+export type PrFilter = 'all' | 'act' | 'review' | 'draft' | 'stale'
 
 export type Executor = 'session' | 'workflow' | 'agent' | 'you'
 
@@ -56,6 +63,9 @@ declare module 'claude-code' {
       view: View
       plan: Plan | null
       here: Here | null
+      filter: PrFilter
+      /** The repo the PR view is narrowed to; empty for every repo. */
+      repo: string
     }
   }
 }
